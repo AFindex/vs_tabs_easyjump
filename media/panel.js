@@ -361,12 +361,10 @@ function renderEntries() {
 function applyFilter() {
   if (filterHandle) {
     cancelAnimationFrame(filterHandle);
+    filterHandle = 0;
   }
 
-  filterHandle = requestAnimationFrame(() => {
-    filterHandle = 0;
-    runFilter();
-  });
+  runFilter();
 }
 
 function runFilter() {
