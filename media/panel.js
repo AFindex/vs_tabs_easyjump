@@ -18,6 +18,22 @@ const statusBar = document.getElementById('statusBar');
 
 let filterHandle = 0;
 
+function applyPayload(payload) {
+  if (!payload) {
+    return;
+  }
+
+  const { entries, alphabet, themeKind } = payload;
+  state.entries = entries ?? [];
+  state.alphabet = (alphabet ?? '').toLowerCase();
+  state.buffer = '';
+  state.locked = false;
+  state.nextHintChar = undefined;
+  state.singleMatchHint = undefined;
+  document.body.dataset.theme = String(themeKind ?? '');
+  renderEntries();
+}
+
 function clampHeat(value) {
   if (!Number.isFinite(value)) {
     return 0;
@@ -30,6 +46,30 @@ function heatToHslComponents(heat) {
   const saturation = Math.round(48 + heat * 32);
   const lightness = Math.round(70 - heat * 20);
   return `${hue} ${saturation}% ${lightness}%`;
+}
+
+function padTwoDigits(value) {
+  return value < 10 ? `0${value}` : String(value);
+}
+
+function formatAbsoluteTime(timestamp) {
+  if (!Number.isFinite(timestamp)) {
+    return '';
+  }
+
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const year = date.getFullYear();
+  const month = padTwoDigits(date.getMonth() + 1);
+  const day = padTwoDigits(date.getDate());
+  const hour = padTwoDigits(date.getHours());
+  const minute = padTwoDigits(date.getMinutes());
+
+  return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
 function formatRelativeTime(timestamp) {
@@ -68,12 +108,7 @@ function formatRelativeTime(timestamp) {
     return `${Math.floor(diff / day)} 天前`;
   }
 
-  try {
-    return new Date(timestamp).toLocaleString(undefined, { hour12: false });
-  } catch (error) {
-    console.error('Failed to format timestamp', error);
-    return '';
-  }
+  return formatAbsoluteTime(timestamp);
 }
 
 function buildUsageMeta(entry) {
@@ -97,15 +132,14 @@ function buildUsageMeta(entry) {
   return parts.join(' · ');
 }
 
-function buildTooltip(entry) {
+function buildTooltip(entry, usageMeta) {
   const lines = [entry.title];
   if (entry.description && entry.description !== entry.title) {
     lines.push(entry.description);
   }
 
-  const meta = buildUsageMeta(entry);
-  if (meta) {
-    lines.push(meta);
+  if (usageMeta) {
+    lines.push(usageMeta);
   }
 
   return lines.join('\n');
@@ -118,15 +152,10 @@ window.addEventListener('message', event => {
   }
 
   if (message.type === 'updateEntries' && message.payload) {
-    const { entries, alphabet, themeKind } = message.payload;
-    state.entries = entries ?? [];
-    state.alphabet = (alphabet ?? '').toLowerCase();
-    state.buffer = '';
-    state.locked = false;
-    state.nextHintChar = undefined;
-    state.singleMatchHint = undefined;
-    document.body.dataset.theme = String(themeKind ?? '');
-    renderEntries();
+    applyPayload(message.payload);
+    if (typeof vscode.setState === 'function') {
+      vscode.setState(message.payload);
+    }
   }
 });
 
@@ -135,6 +164,22 @@ window.addEventListener('load', () => {
   setTimeout(() => document.body.focus(), 0);
   vscode.postMessage({ type: 'ready' });
 });
+
+const bootstrapPayload = window.__TAB_EASY_MOTION_BOOTSTRAP__;
+if (bootstrapPayload) {
+  applyPayload(bootstrapPayload);
+  if (typeof vscode.setState === 'function') {
+    vscode.setState(bootstrapPayload);
+  }
+  window.__TAB_EASY_MOTION_BOOTSTRAP__ = undefined;
+}
+
+if (!bootstrapPayload && typeof vscode.getState === 'function') {
+  const restored = vscode.getState();
+  if (restored) {
+    applyPayload(restored);
+  }
+}
 
 document.addEventListener('keydown', event => {
   if (state.locked) {
@@ -182,6 +227,42 @@ document.addEventListener('keydown', event => {
   }
 });
 
+function composeClassName(baseClass, extraClasses) {
+  if (!extraClasses || extraClasses.length === 0) {
+    return baseClass;
+  }
+
+  return `${baseClass} ${extraClasses.join(' ')}`;
+}
+
+function applyEntryClasses(entry, extraClasses) {
+  const extraKey = extraClasses.length ? extraClasses.join(' ') : '';
+
+  if (entry.lastAppliedExtraKey === extraKey) {
+    return;
+  }
+
+  entry.element.className = composeClassName(entry.baseClass, extraClasses);
+  entry.lastAppliedExtra = extraClasses.slice();
+  entry.lastAppliedExtraKey = extraKey;
+}
+
+function updateLetterClass(entry, index, newState) {
+  if (entry.letterStates[index] === newState) {
+    return;
+  }
+
+  const span = entry.hintLetters[index];
+
+  if (!span) {
+    return;
+  }
+
+  const baseClass = entry.letterBaseClass;
+  span.className = newState ? `${baseClass} ${newState}` : baseClass;
+  entry.letterStates[index] = newState;
+}
+
 function renderEntries() {
   if (!container) {
     return;
@@ -195,10 +276,10 @@ function renderEntries() {
   state.entries.forEach(entry => {
     const hintValue = entry.hint || '';
     const item = document.createElement('div');
-    item.className = 'tab-item';
     item.dataset.hint = hintValue;
     item.dataset.title = entry.title;
-    item.title = buildTooltip(entry);
+    const usageMeta = buildUsageMeta(entry);
+    item.title = buildTooltip(entry, usageMeta);
 
     const heat = clampHeat(entry.usageHeat ?? 0);
     item.style.setProperty('--heat-strength', heat.toFixed(3));
@@ -222,15 +303,17 @@ function renderEntries() {
       sizeClass = 'size-xl';
     }
 
-    item.classList.add(sizeClass);
+    const baseClass = `tab-item ${sizeClass}`;
+    item.className = baseClass;
 
     const hintEl = document.createElement('div');
     hintEl.className = 'tab-hint';
 
     const hintLetters = [];
+    const letterBaseClass = 'tab-hint-letter';
     hintValue.split('').forEach(char => {
       const span = document.createElement('span');
-      span.className = 'tab-hint-letter';
+      span.className = letterBaseClass;
       span.textContent = char.toUpperCase();
       hintEl.appendChild(span);
       hintLetters.push(span);
@@ -242,7 +325,7 @@ function renderEntries() {
 
     const metaEl = document.createElement('div');
     metaEl.className = 'tab-meta';
-    metaEl.textContent = buildUsageMeta(entry);
+    metaEl.textContent = usageMeta;
 
     item.appendChild(hintEl);
     item.appendChild(titleEl);
@@ -261,7 +344,12 @@ function renderEntries() {
       element: item,
       hintValue,
       hintLower: hintValue.toLowerCase(),
-      hintLetters
+      hintLetters,
+      baseClass,
+      letterBaseClass,
+      letterStates: new Array(hintLetters.length).fill(''),
+      lastAppliedExtra: [],
+      lastAppliedExtraKey: ''
     });
   });
 
@@ -287,6 +375,7 @@ function runFilter() {
   }
 
   const buffer = state.buffer.toLowerCase();
+  const hasBuffer = buffer.length > 0;
   state.matches = [];
   state.exactHint = undefined;
   state.nextHintChar = undefined;
@@ -299,20 +388,18 @@ function runFilter() {
   }
 
   state.domEntries.forEach(entry => {
-    const { element, hintLower, hintValue, hintLetters } = entry;
+    const { hintLower, hintValue, hintLetters } = entry;
 
-    element.classList.remove('match', 'exact', 'dimmed', 'single');
+    if (!hasBuffer) {
+      for (let i = 0; i < hintLetters.length; i += 1) {
+        updateLetterClass(entry, i, 'remaining');
+      }
 
-    hintLetters.forEach(span => {
-      span.classList.remove('matched', 'next', 'remaining', 'inactive');
-    });
-
-    if (!buffer) {
-      hintLetters.forEach(span => {
-        span.classList.add('remaining');
-      });
+      applyEntryClasses(entry, []);
       return;
     }
+
+    const extraClasses = [];
 
     if (hintLower.startsWith(buffer)) {
       state.matches.push(hintValue);
@@ -323,33 +410,36 @@ function runFilter() {
         state.singleMatchEntry = undefined;
       }
 
-      element.classList.add('match');
+      extraClasses.push('match');
 
-      hintLetters.forEach((span, index) => {
-        if (index < buffer.length) {
-          span.classList.add('matched');
-        } else if (index === buffer.length) {
-          span.classList.add('next');
+      for (let i = 0; i < hintLetters.length; i += 1) {
+        if (i < buffer.length) {
+          updateLetterClass(entry, i, 'matched');
+        } else if (i === buffer.length) {
+          updateLetterClass(entry, i, 'next');
         } else {
-          span.classList.add('remaining');
+          updateLetterClass(entry, i, 'remaining');
         }
-      });
+      }
 
       if (hintLower === buffer) {
         state.exactHint = hintValue;
-        element.classList.add('exact');
+        extraClasses.push('exact');
       } else if (!state.nextHintChar && buffer.length < hintLower.length) {
         state.nextHintChar = hintLower.charAt(buffer.length).toUpperCase();
       }
     } else {
-      element.classList.add('dimmed');
-      hintLetters.forEach(span => {
-        span.classList.add('inactive');
-      });
+      extraClasses.push('dimmed');
+
+      for (let i = 0; i < hintLetters.length; i += 1) {
+        updateLetterClass(entry, i, 'inactive');
+      }
     }
+
+    applyEntryClasses(entry, extraClasses);
   });
 
-  if (!buffer) {
+  if (!hasBuffer) {
     state.matches = state.domEntries.map(entry => entry.hintValue);
     updateStatus();
     return;
@@ -368,7 +458,11 @@ function runFilter() {
     state.singleMatchHint = onlyHint;
 
     if (singleEntry) {
-      singleEntry.element.classList.add('single');
+      const lastExtras = singleEntry.lastAppliedExtra ?? [];
+      if (!lastExtras.includes('single')) {
+        const updatedExtras = lastExtras.concat('single');
+        applyEntryClasses(singleEntry, updatedExtras);
+      }
 
       if (!state.nextHintChar && singleEntry.hintLower.length > buffer.length) {
         state.nextHintChar = singleEntry.hintLower.charAt(buffer.length).toUpperCase();

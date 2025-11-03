@@ -38,7 +38,7 @@ export class TabHintsPanel implements vscode.Disposable {
     this.latestPayload = payload;
 
     if (!this.panel) {
-      this.panel = this.createPanel();
+      this.panel = this.createPanel(payload);
     }
 
     this.panel.title = 'Tab EasyMotion';
@@ -56,7 +56,7 @@ export class TabHintsPanel implements vscode.Disposable {
     this.cleanupPanel();
   }
 
-  private createPanel(): vscode.WebviewPanel {
+  private createPanel(initialPayload: UpdatePayload): vscode.WebviewPanel {
     const panel = vscode.window.createWebviewPanel(
       'tabEasyMotion.panel',
       'Tab EasyMotion',
@@ -71,7 +71,7 @@ export class TabHintsPanel implements vscode.Disposable {
       }
     );
 
-    panel.webview.html = this.buildHtml(panel.webview);
+    panel.webview.html = this.buildHtml(panel.webview, initialPayload);
 
     this.panelSubscriptions.push(
       panel.onDidDispose(() => {
@@ -123,7 +123,7 @@ export class TabHintsPanel implements vscode.Disposable {
     }
   }
 
-  private buildHtml(webview: vscode.Webview): string {
+  private buildHtml(webview: vscode.Webview, initialPayload: UpdatePayload): string {
     const nonce = getNonce();
     const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'panel.js'));
     const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'panel.css'));
@@ -134,6 +134,8 @@ export class TabHintsPanel implements vscode.Disposable {
       `script-src 'nonce-${nonce}' ${webview.cspSource}`,
       `img-src ${webview.cspSource} data:`
     ].join('; ');
+
+    const payloadScript = this.buildBootstrapScript(initialPayload);
 
     return `<!DOCTYPE html>
 <html lang="zh-cn">
@@ -149,9 +151,15 @@ export class TabHintsPanel implements vscode.Disposable {
       <div id="hintContainer" class="hint-container"></div>
       <div id="statusBar" class="status-bar">输入提示键以跳转</div>
     </div>
+    <script nonce="${nonce}">${payloadScript}</script>
     <script nonce="${nonce}" src="${scriptUri}"></script>
   </body>
 </html>`;
+  }
+
+  private buildBootstrapScript(payload: UpdatePayload): string {
+    const json = JSON.stringify(payload).replace(/<\//g, '<\\/');
+    return `window.__TAB_EASY_MOTION_BOOTSTRAP__ = ${json};`;
   }
 
   private cleanupPanel(): void {
