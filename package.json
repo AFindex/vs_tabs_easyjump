@@ -1,0 +1,60 @@
+{
+  "name": "tab-easymotion",
+  "displayName": "Tab EasyMotion",
+  "description": "通过键盘在当前编辑器组的标签页间快速跳转",
+  "version": "0.0.1",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:tabEasyMotion.activate"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tabEasyMotion.activate",
+        "title": "Tab EasyMotion: Jump Between Tabs"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "tabEasyMotion.activate",
+        "key": "ctrl+shift+;",
+        "mac": "cmd+shift+;",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Tab EasyMotion",
+      "properties": {
+        "tabEasyMotion.hintAlphabet": {
+          "type": "string",
+          "default": "asdfghjkl;wertyuiopxcvbnm",
+          "markdownDescription": "生成提示键时使用的字符集合，建议优先使用主键盘区常用字母。"
+        },
+        "tabEasyMotion.maxHintLength": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "markdownDescription": "提示键的最大长度。设为 1 仅使用单字符提示，设为 0 或负数表示不限制长度。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -w -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.0",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.2.2"
+  }
+}
+
